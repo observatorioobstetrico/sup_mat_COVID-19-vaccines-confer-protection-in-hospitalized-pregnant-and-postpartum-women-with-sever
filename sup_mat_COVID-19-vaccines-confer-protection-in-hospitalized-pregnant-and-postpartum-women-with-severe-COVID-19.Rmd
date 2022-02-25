@@ -1,0 +1,1359 @@
+---
+title: "Documentation of the article 'COVID-19 vaccines confer protection in hospitalized pregnant and postpartum women with severe COVID-19'"
+author: 'Codes and outputs'
+date: "Feb 10, 2022"
+header-includes:
+  - \usepackage{float}
+  - \renewcommand{\contentsname}{Sumário}
+output:   
+  html_document:
+    self_contained: no
+  word_document: default
+  pdf_document:
+    toc: yes
+    toc_depth: '1'
+    keep_tex: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\newpage
+# Description
+ 
+This file presents the documentation of the analysis of article "COVID-19 vaccines confer protection in hospitalized pregnant and postpartum women with severe COVID-19".
+
+
+# About the database and R packages used
+
+The data are analyzed using the free-software R (https://www.R-project.org) in version 4.0.3. Next, we present and load the libraries used in the data analysis process.
+
+```{r pacotes, echo=TRUE, message=FALSE, warning =FALSE,error=FALSE, results='hide'}
+#load packages
+loadlibrary <- function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = T)
+    if (!require(x, character.only = TRUE))
+      stop("Package not found")
+  }
+}
+
+packages <-
+  c(
+    "readr",
+    "readxl",
+    "janitor",
+    "dplyr",
+    "forcats",
+    "stringr",
+    "lubridate",
+    "summarytools",
+    "magrittr",
+    "questionr", 
+    "knitr",
+    "data.table",
+    "modelsummary", 
+    "kableExtra", 
+    "DescTools",  
+    "effectsize",
+    "WeightIt",
+    "MatchIt",
+    "ggplot2",
+    "ggpubr", 
+    "naniar",
+    "mice",
+    "miceafter", 
+    "VIM",
+    "miceadds"
+  )
+
+lapply(packages, loadlibrary)
+```
+
+One can see below the functions that will be used in the data analysis.
+
+```{r,echo=TRUE, eval=TRUE, message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+#functions for summary measures
+media <- function(x)
+  mean(x, na.rm = TRUE)
+mediana <- function(x)
+  median(x, na.rm = TRUE)
+DP <- function(x)
+  sd(x, na.rm = TRUE)
+minimo <- function(x)
+  base::min(x, na.rm = TRUE)
+maximo <- function(x)
+  base::max(x, na.rm = TRUE)
+q25 <- function(x)
+  stats::quantile(x, p = 0.25, na.rm = TRUE)
+q75 <- function(x)
+  stats::quantile(x, p = 0.75, na.rm = TRUE)
+IQR <- function(x)
+  round(q75(x) - q25(x), 2)
+n <- function(x)
+  sum(!is.na(x))
+```
+
+This is a retrospective cohort study using the data from the Influenza Epidemiological Surveillance Information System, SIVEP-Gripe (Sistema de Informação de Vigilância Epidemiológica da Gripe) database. 
+
+The SIVEP-Gripe is a nationwide surveillance database created to monitor severe acute respiratory infections and data on virus circulation and respiratory infections in Brazil.  
+
+The period analyzed comprises epidemiological data from 2021, with a database obtained on December 2, 2021 on the website https://opendatasus.saude.gov.br. The dataset can be obtained at https://www.kaggle.com/agatharodrigues/covid19-vaccine-maternal-population. It is loaded below:
+
+```{r,echo=FALSE, eval=TRUE, message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+ memory.limit(999999)
+```
+
+```{r,echo=TRUE,message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+#loading the datasets
+#2021
+dados <- read_delim(
+  "INFLUD21-29-11-2021.csv",
+  ";",
+  escape_double = FALSE,
+  locale = locale(encoding = "ISO-8859-2"),
+  trim_ws = TRUE
+)
+
+#Create case year variable
+dados <-  dados %>%
+  dplyr::mutate(
+    dt_sint = as.Date(DT_SIN_PRI, format = "%d/%m/%Y"), #date of first symptoms
+    dt_nasc = as.Date(DT_NASC, format = "%d/%m/%Y"), #date of birth
+    dt_vac_gripe = as.Date(DT_UT_DOSE, format = "%d/%m/%Y"), #date of Influenza vaccine
+    ano = lubridate::year(dt_sint), #year of the case
+  )
+```
+
+There are `r dim(dados)[1]` observations in the database. To see the dictionary of variables, access (in Portuguese):
+https://opendatasus.saude.gov.br/dataset/ae90fa8f-3e94-467e-a33f-94adbb66edf8/resource/8f571374-c555-4ec0-8e44-00b1e8b11c25/download/dicionario-de-dados-srag-hospitalizado-27.07.2020-final.pdf
+ 
+ 
+# Case selection and data treatment
+
+The first filter is to select cases from May 02, 2021 (18th epidemiological week of symptoms of 2021) to November 27, 2021 (epidemiological week 47 of 2021).
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#selection of cases from 18th epidemiological week of symptoms (May 2, 2021) 
+#to November 27, 2021 (week 43 of 2021).
+sem1 <- 18
+sem2 <- 47
+
+dados1 <- dados %>% 
+  filter(SEM_PRI >= sem1 &  SEM_PRI <= sem2)
+
+```
+
+There are `r dim(dados1)[1]` observations in the database after selection of valid years.
+
+The next selection is female:
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#filtering F
+dados2 <- filter(dados1, CS_SEXO == "F")
+```
+
+There are `r dim(dados2)[1]` observations in the database.
+
+Selection of women of childbearing age (10 to 55 years): 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#creating the age variable as the difference between dt_sint and dt_nasc.
+#In cases without dt_nasc, we consider
+#the NU_AGE_N field
+dados2 <- dados2 %>% 
+  mutate(
+         idade = as.period(interval(start = dt_nasc, end = dt_sint))$year, 
+         age = ifelse(is.na(idade), NU_IDADE_N, idade)
+  )
+
+#Filtering of cases aged 55 and under
+dados3 <- dados2 %>% 
+  filter(age > 9 & age <= 55)
+```
+
+There are `r dim(dados3)[1]` observations in the database.
+
+
+The next step is to identify pregnant and postpartum people (variable `classi_gesta_puerp`) and then select only those cases.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Creating the classification variable if pregnant, postpartum and 
+##neither pregnant nor postpartum
+dados3 <- dados3 %>%
+  mutate(
+    classi_gesta_puerp = case_when(
+      CS_GESTANT == 1  ~ "1tri",
+      CS_GESTANT == 2  ~ "2tri",
+      CS_GESTANT == 3  ~ "3tri",
+      CS_GESTANT == 4  ~ "IG_ig",
+      CS_GESTANT == 5 &
+        PUERPERA == 1 ~ "puerp",
+      CS_GESTANT == 9 & PUERPERA == 1 ~ "puerp",
+      TRUE ~ "no" 
+    )
+  )
+
+freq(dados3$classi_gesta_puerp)
+
+#filtering only pregnant and postpartum women
+dados4 <- dados3 %>%
+  filter(classi_gesta_puerp != "no")
+```
+
+There are `r dim(dados4)[1]` observations in the database.
+
+We selected only confirmed cases of COVID-19.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+dados4 <- dados4 %>% 
+  mutate(
+    classi_fin = case_when(
+      CLASSI_FIN == 5 ~ "covid",
+      TRUE ~ "no"
+    )
+  )
+
+
+#filtering only covid cases 
+dados5 <- dados4 %>% 
+    filter(CLASSI_FIN == 5)
+```
+
+There are `r dim(dados5)[1]` observations in the database.
+
+Now let's select the cases of COVID by PCR or antigen, but which are also not positive for Influenza.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#COVID case diagnosed by PCR
+dados5 <- dados5 %>%
+  mutate(pcr_covid_SN = case_when(
+    (PCR_SARS2 == 1) |
+      (
+        str_detect(DS_PCR_OUT, "SARS|COVID|COV|CORONA|CIVID") 
+      ) ~ "yes",  
+    TRUE ~ "no"  
+  ))
+
+#Influenza case diagnosed by PCR 
+dados5 <- dados5 %>%
+  mutate(pcr_influenza_SN = case_when(
+    (POS_PCRFLU == 1) |
+      (
+        str_detect(DS_PCR_OUT, "INFLU|INFLUENZA") 
+      ) ~ "yes", 
+    TRUE ~ "no"  
+  ))
+
+with(dados5, table(pcr_influenza_SN, pcr_covid_SN))
+```
+
+There is no case that is positive for COVID and for Influenza by PCR.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Case of COVID diagnosed by antigen
+dados5 <- dados5 %>%
+  mutate(antigenio_covid_SN = case_when(
+    (AN_SARS2 == 1) |
+      (
+        str_detect(DS_AN_OUT, "SARS|COVID|COV|CORONA|CIVID") 
+      ) ~ "yes",  
+    TRUE ~ "no" 
+  ))
+
+
+#Influenza case diagnosed by antigen
+dados5 <- dados5 %>%
+  mutate(antigenio_influenza_SN = case_when(
+    (POS_AN_FLU == 1) |
+      (
+        str_detect(DS_AN_OUT, "INFLU|INFLUENZA") 
+      ) ~ "yes",  
+    TRUE ~ "no"  
+  ))
+
+with(dados5, table(antigenio_influenza_SN, antigenio_covid_SN))
+```
+
+There is one positive case for COVID and for Influenza by antigen.
+
+We will now select the cases of COVID confirmed by PCR or antigen.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(dados5, table(pcr_covid_SN, antigenio_covid_SN))
+
+#filtering only covid cases by PCR or antigen
+dados6 <- dados5 %>% 
+    filter(pcr_covid_SN == "yes" | antigenio_covid_SN == "yes")
+```
+
+There are `r dim(dados6)[1]` observations in the database.
+
+Now it's time to remove cases that are also positive for Influenza.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(dados6, table(pcr_influenza_SN, antigenio_influenza_SN))
+
+#filtering only negative cases of Influenza by PCR or antigen
+dados7 <- dados6 %>% 
+    filter(pcr_influenza_SN != "yes" & antigenio_influenza_SN != "yes")  
+```
+
+There are `r dim(dados7)[1]` observations in the database.
+
+
+We will only select the finalized cases (death or cure). The variable that indicates the outcome is `EVOLUCAO`, with the categories: 1-Cure; 2-Death; 3- Death from other causes; 9-Ignored.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(dados7, freq(EVOLUCAO))
+```
+
+Let's select only the finalized cases:
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#filtering only completed cases
+dados8 <- dados7 %>% 
+  filter((EVOLUCAO == 1 | EVOLUCAO == 2 | EVOLUCAO == 3) & !is.na(EVOLUCAO))
+
+
+#creating the evolution variable
+dados8 <- dados8 %>% 
+  mutate(death = case_when(
+    EVOLUCAO == 1 ~ "cure", 
+    EVOLUCAO == 2 ~ "death",
+    EVOLUCAO == 3 ~ "death"
+  ))
+
+with(dados8, freq(death))
+```
+
+There are `r dim(dados8)[1]` observations in the database.
+
+The variable that indicates whether the person received a vaccine against COVID-19 is `VACINA_COV`, with categories: 1-yes; 2-no; 9-ignored.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Frequency table for VACINA_COV
+with(dados8, freq(VACINA_COV))
+```
+
+Let's now group "NA" and "9" in the same category (NA - missing data) and label the valid categories.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#recoding the vaccine_cov variable 
+dados8 <- dados8 %>% 
+  mutate(vaccine_cov = case_when(
+    VACINA_COV == 1 ~ "yes", 
+    VACINA_COV == 2 ~ "no",
+    TRUE ~ NA_character_
+  ))
+#frequency table for vaccine_cov
+with(dados8, freq(vaccine_cov))
+```
+
+The next step is filtering cases that we have information about COVID-19 vaccination. These data are analyzed in the following. 
+
+```{r,echo=TRUE, eval=TRUE, message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+#Filtering cases with information about vaccination
+data_final <- dados8 %>% 
+  filter(!is.na(vaccine_cov))
+```
+
+```{r,echo=TRUE, eval=TRUE, message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, freq(vaccine_cov))
+```
+
+The variable `vaccine_cov` only indicates if the pregnant or postpartum women took the vaccine, regardless of the dose. There is no information on whether the person only took the first dose or the second. The closest we come to this is to consider the column `DOSE_2_COV`, which indicates the date of the second dose.
+
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Create second dose date variable
+data_final <-  data_final %>%
+  dplyr::mutate(
+    dt_dose2_cov = as.Date(DOSE_2_COV, format = "%d/%m/%Y")
+  )
+
+#Create variable that indicates that it has the date of the second dose
+data_final <-  data_final%>%
+  dplyr::mutate(
+    indic_dt_dose2_cov = ifelse(is.na(dt_dose2_cov) & !is.na(vaccine_cov), 0, ifelse(is.na(vaccine_cov), NA, 1))
+  )
+
+# first dose date frequency table
+with(data_final, freq(indic_dt_dose2_cov, total =  TRUE))
+```
+
+There is only information on the date of the second dose for `r dim(data_final[data_final$indic_dt_dose2_cov == 1, ])[1]` cases of `r dim(data_final[data_final$vaccine_cov == "yes", ])[1]` cases indicated as "yes" for COVID-19 vaccine.
+
+Now we will analyze the not vaccinated group versus two dose vaccinated group. 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Create second dose date variable
+data_final <- data_final %>% 
+  filter(vaccine_cov == "no" | (vaccine_cov == "yes" & indic_dt_dose2_cov == 1))
+
+with(data_final, freq(vaccine_cov))
+```
+
+```{r, echo=FALSE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+require(writexl)
+write_xlsx(data_final, "final_dataset.xlsx")
+```
+
+#Analysis 
+
+## Epidemiologic characteristics 
+
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Ethnicity
+data_final <-  data_final %>%
+  mutate(
+    ethnicity = case_when(
+      CS_RACA == 1 ~ "white",
+      CS_RACA == 2 ~ "black",
+      CS_RACA == 3 ~ "yellow",
+      CS_RACA == 4 ~ "brown",
+      CS_RACA == 5 ~ "indigenous",
+      TRUE ~ NA_character_
+    ), 
+    white_color = case_when(
+      ethnicity == "white" ~ "yes", 
+      is.na(ethnicity) ~ NA_character_, 
+      TRUE ~ "no"
+    )
+  )
+
+# Education
+data_final <-  data_final %>%
+  mutate(
+    education2 = case_when(
+      CS_ESCOL_N <= 2 ~ "up to 9 years", 
+      CS_ESCOL_N == 3 ~ "from 9 to 12 years", 
+      CS_ESCOL_N == 4 ~ "over 12 years",
+      TRUE ~ NA_character_
+    )
+  )
+data_final$education2 <-
+  factor(data_final$education2, levels = c("up to 9 years", "from 9 to 12 years", "over 12 years"))
+
+# residence area
+data_final <-  data_final %>%
+  mutate(
+    residence = case_when(
+      CS_ZONA == 1 ~ "urban",
+      CS_ZONA == 2 ~ "rural",
+      CS_ZONA == 3 ~ "periurban",
+      TRUE ~ NA_character_
+    )
+  )
+
+# residence area 2 (grouping the categories urban and periurban)
+data_final <-  data_final %>%
+  mutate(
+    residence2 = case_when(
+      CS_ZONA == 1 ~ "urban/periurban",
+      CS_ZONA == 2 ~ "rural",
+      CS_ZONA == 3 ~ "urban/periurban",
+      TRUE ~ NA_character_
+    )
+  )
+data_final$residence2 <-
+  factor(data_final$residence2, levels = c("rural", "urban/periurban"))
+```
+
+### Ethnicity
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(data_final, ctable(ethnicity, vaccine_cov,  prop = "c", useNA = "no", chisq = FALSE, OR = FALSE))
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fisher.test(data_final$ethnicity, data_final$vaccine_cov)
+```
+
+### White color
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(data_final, ctable(white_color, vaccine_cov,  prop = "c", useNA = "no", chisq = TRUE, OR = TRUE))
+```
+
+
+### Education (years)
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(data_final, ctable(education2, vaccine_cov, prop = "c", useNA = "no", chisq = TRUE))
+```
+
+
+### Age 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+datasummary((vaccine_cov) ~ age*(n+media+DP+mediana+q25+q75+IQR),
+            data = data_final, output = 'markdown')
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#t-test
+t.test(age ~ vaccine_cov, data = data_final)
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#effect size
+c_cohen <- cohens_d(age ~ as.factor(vaccine_cov), data=data_final)
+c_cohen
+interpret_d(c_cohen$Cohens_d,rules="cohen1988")
+```
+
+### Residence area
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(data_final, ctable(residence, vaccine_cov, prop = "c", useNA = "no", chisq = FALSE))
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fisher.test(data_final$residence, data_final$vaccine_cov)
+```
+
+### Residence area 2 (grouping the categories urban and periurban)
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+with(data_final, ctable(residence2, vaccine_cov, prop = "c", useNA = "no", chisq = TRUE, OR = TRUE))
+```
+
+
+## Comorbities
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Cardiac
+data_final <-  data_final %>%
+  mutate(cardiac = case_when(CARDIOPATI == 1 ~ "yes",
+                             CARDIOPATI == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+#Hematologic
+data_final <-  data_final %>%
+  mutate(hematologic = case_when(HEMATOLOGI == 1 ~ "yes",
+                                 HEMATOLOGI == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+#Hepatic
+data_final <-  data_final %>%
+  mutate(hepatic = case_when(HEPATICA == 1 ~ "yes",
+                             HEPATICA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+#Asthma
+data_final <-  data_final %>%
+  mutate(asthma = case_when(ASMA == 1 ~ "yes",
+                            ASMA == 2 ~ "no",
+                            TRUE ~ NA_character_))
+
+#Diabetes
+data_final <-  data_final %>%
+  mutate(diabetes = case_when(DIABETES == 1 ~ "yes",
+                              DIABETES == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+#Neurologic
+data_final <-  data_final %>%
+  mutate(neurologic = case_when(NEUROLOGIC == 1 ~ "yes",
+                                NEUROLOGIC == 2 ~ "no",
+                                TRUE ~ NA_character_))
+
+#Pneumologic
+data_final <-  data_final %>%
+  mutate(pneumologic = case_when(PNEUMOPATI == 1 ~ "yes",
+                                 PNEUMOPATI == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+#Imunossupression
+data_final <-  data_final %>%
+  mutate(imuno = case_when(IMUNODEPRE == 1 ~ "yes",
+                           IMUNODEPRE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+#Renal
+data_final <-  data_final %>%
+  mutate(renal = case_when(RENAL == 1 ~ "yes",
+                           RENAL == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+#Obesity
+data_final <-  data_final %>%
+  mutate(obesity = case_when(OBESIDADE == 1 ~ "yes",
+                             OBESIDADE == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+
+```
+
+
+### Cardiac
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, cardiac, prop = "r", useNA = "no", chisq = TRUE, OR = TRUE))
+```
+
+###  Hematologic
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, hematologic, prop = "r", useNA = "no", chisq = FALSE, OR = TRUE))
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fisher.test(data_final$hematologic, data_final$vaccine_cov)
+```
+
+###  Diabetes
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$diabetes, chisq=TRUE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+###  Obesity
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$obesity, chisq=TRUE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+###  Asthma
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$asthma, chisq=TRUE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+###  Hepatic
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$hepatic, chisq=FALSE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+fisher.test(data_final$vaccine_cov, data_final$hepatic)
+```
+
+
+###  Neurologic
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$neurologic, chisq=FALSE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+fisher.test(data_final$vaccine_cov, data_final$neurologic)
+```
+
+
+###  Pneumologic
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$pneumologic, chisq=FALSE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+fisher.test(data_final$vaccine_cov, data_final$pneumologic)
+```
+
+###  Imunossupression
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$imuno, chisq=FALSE, prop="r", useNA = "no", OR = TRUE)
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fisher.test(data_final$imuno, data_final$vaccine_cov)
+```
+
+###  Renal
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+ctable(data_final$vaccine_cov, data_final$renal, chisq=FALSE, prop="r",  useNA = "no", OR = TRUE)
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fisher.test(data_final$renal, data_final$vaccine_cov)
+```
+
+
+## Symptoms
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Fever
+data_final <-  data_final %>%
+  mutate(fever = case_when(FEBRE == 1 ~ "yes",
+                           FEBRE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Cough
+data_final <-  data_final %>%
+  mutate(cough = case_when(TOSSE == 1 ~ "yes",
+                           TOSSE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Sore throat
+data_final <-  data_final %>%
+  mutate(sore_throat = case_when(GARGANTA == 1 ~ "yes",
+                                 GARGANTA == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+# Dyspnea
+data_final <-  data_final %>%
+  mutate(dyspnea = case_when(DISPNEIA == 1 ~ "yes",
+                             DISPNEIA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+# Respiratory discomfort
+data_final <-  data_final %>%
+  mutate(resp_disc = case_when(DESC_RESP == 1 ~ "yes",
+                               DESC_RESP == 2 ~ "no",
+                               TRUE ~ NA_character_))
+
+# Desaturation
+data_final <-  data_final %>%
+  mutate(desaturation = case_when(SATURACAO == 1 ~ "yes",
+                                  SATURACAO == 2 ~ "no",
+                                  TRUE ~ NA_character_))
+
+# Diarrhea
+data_final <-  data_final %>%
+  mutate(diarrhea = case_when(DIARREIA == 1 ~ "yes",
+                              DIARREIA == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+# Vomit
+data_final <-  data_final %>%
+  mutate(vomit = case_when(VOMITO == 1 ~ "yes",
+                           VOMITO == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Abdominal pain
+data_final <-  data_final %>%
+  mutate(abd_pain = case_when(DOR_ABD == 1 ~ "yes",
+                              DOR_ABD == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+# Fatigue
+data_final <-  data_final %>%
+  mutate(fatigue = case_when(FADIGA == 1 ~ "yes",
+                             FADIGA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+# Olfactory loss
+data_final <-  data_final %>%
+  mutate(olfac_loss = case_when(PERD_OLFT == 1 ~ "yes",
+                                PERD_OLFT == 2 ~ "no",
+                                TRUE ~ NA_character_))
+
+# Loss of taste
+data_final <-  data_final %>%
+  mutate(loss_taste = case_when(PERD_PALA == 1 ~ "yes",
+                                PERD_PALA == 2 ~ "no",
+                                TRUE ~ NA_character_))
+
+# Any respiratory symptom
+df <- data_final %>% 
+  select(dyspnea,fatigue,desaturation,resp_disc)
+
+soma <- function(x){
+  if (sum(is.na(x))==4)
+    return(NA_character_)
+  else
+    return(sum(!is.na(x) & x=="yes")) 
+}
+data_final$qt_sintomas_resp_aux <- apply(df,1,soma)
+
+data_final <-  data_final %>%
+  mutate(resp_symp = case_when(qt_sintomas_resp_aux >=1 ~ "yes",
+                               qt_sintomas_resp_aux ==0 ~ "no",
+                               TRUE ~ NA_character_))
+# Any symptom
+df <- data_final %>% 
+  select(dyspnea,fatigue,desaturation,resp_disc,
+         fever,cough,sore_throat,diarrhea,vomit,abd_pain,olfac_loss,loss_taste)
+soma <- function(x){
+  if (sum(is.na(x))==12)
+    return(NA_character_)
+  else
+    return(sum(!is.na(x) & x=="yes")) 
+}
+data_final$qt_sintomas_aux <- apply(df,1,soma)
+
+data_final <-  data_final %>%
+  mutate(symptom = case_when(qt_sintomas_aux >= 1 ~ "yes",
+                             qt_sintomas_aux == 0 ~ "no",
+                             TRUE ~ NA_character_))
+```
+
+### Fever
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, fever, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Cough
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, cough, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+
+### Sore throat
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, sore_throat, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+###  Dyspnea
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, dyspnea, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+###  Respiratory discomfort
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, resp_disc, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Desaturation
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, desaturation, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Diarrhea
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, diarrhea, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+###  Vomit
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, vomit, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Abdominal pain
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, abd_pain, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Fatigue
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, fatigue, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Olfactory loss
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, olfac_loss, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Loss of taste
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, loss_taste, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Any respiratory symptom
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, resp_symp, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Any symptom
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, symptom, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+
+## Outcome
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# ICU
+data_final <- data_final %>%
+  mutate(icu = case_when(UTI == 1 ~ "yes",
+                         UTI == 2 ~ "no",
+                         TRUE ~ NA_character_))
+
+
+# Length time in ICU
+data_final<-  data_final%>% 
+  mutate(dt_enticu  = as.Date(DT_ENTUTI,  format = "%d/%m/%Y"),
+         dt_exicu = as.Date(DT_SAIDUTI, format = "%d/%m/%Y"), 
+         time_icu = as.numeric(dt_exicu - dt_enticu)
+  )
+
+# ventilatory support
+data_final <- data_final %>% 
+  mutate(ventilatory_support = case_when(SUPORT_VEN == 1 ~ "invasive",
+                                SUPORT_VEN == 2 ~ "non-invasive",
+                                  SUPORT_VEN == 3 ~ "no",
+                                TRUE ~ NA_character_))
+
+# Intubation
+data_final <- data_final %>% 
+  mutate(intubation = case_when(SUPORT_VEN == 1 ~ "yes",
+                                SUPORT_VEN == 2 | SUPORT_VEN == 3 ~ "no",
+                                TRUE ~ NA_character_))
+
+
+```
+
+### ICU
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, icu, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Length time in ICU
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+data_final_aux <- data_final %>% 
+  filter (icu == "yes")
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+datasummary((vaccine_cov) ~ time_icu*(n+media+DP+mediana+q25+q75+IQR),
+            data = data_final_aux, output = 'markdown')
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#t-test
+t.test(time_icu ~ vaccine_cov, data = data_final_aux)
+```
+
+### Ventilatory support
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, ventilatory_support, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Intubation
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, intubation, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Death
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_final, ctable(vaccine_cov, death, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+ 
+
+# Propensity Scoring Method (PSM) - information about date of second dose
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+data_final <- data_final %>% 
+  mutate(vaccine1 = ifelse(vaccine_cov == "yes", 1, 0),
+         id = 1:dim(data_final)[1]) 
+
+data_final1 <- data_final %>% 
+  select(id, vaccine1, age, cardiac)
+
+data_final1 <- data_final1 %>% 
+  mutate(
+    cardiac1 = ifelse(is.na(cardiac) == TRUE, "na", cardiac)
+  )
+  
+#PSM
+psm1 <- matchit(vaccine1 ~ age + cardiac1, data = data_final1, method = "nearest", ratio =1)
+
+summary(psm1)
+plot(psm1, type = "jitter", interactive = FALSE)
+plot(psm1, type = "qq", interactive = FALSE,
+     which.xs = c("age", "cardiac1"))
+plot(summary(psm1))
+
+
+```
+
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+#Selecting only the selected observations
+data_aux <- data_final1[psm1$weights==1, ]
+
+#Now let's join data_aux with data_final
+
+data_psm <- right_join(data_final, data_aux, by= c("id", "vaccine1", "age", "cardiac"))
+
+freq(data_psm$vaccine_cov)
+```
+
+## For outcomes
+
+### ICU
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_psm, ctable(vaccine_cov, icu, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Length time in ICU
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+data_psm_aux <- data_psm %>% 
+  filter (icu == "yes")
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+datasummary((vaccine_cov) ~ time_icu*(n+media+DP+mediana+q25+q75+IQR),
+            data = data_psm_aux, output = 'markdown')
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#teste t
+t.test(time_icu ~ vaccine_cov, data = data_psm_aux)
+```
+
+### Ventilatory support
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_psm, ctable(vaccine_cov, ventilatory_support, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Intubation
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_psm, ctable(vaccine_cov, intubation, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+### Death
+
+```{r, echo=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+with(data_psm, ctable(vaccine_cov, death, prop = "r", useNA = "no", chisq = TRUE, OR=TRUE))
+```
+
+
+# Multivariate Imputation by Chained Equations (MICE) 
+
+A total of `r (dim(data_final[data_final$indic_dt_dose2_cov==0, ])[1]+dim(data_final[data_final$indic_dt_dose2_cov==1, ])[1])` patients were analyzed and divided into two groups, according to their COVID-19 vaccination status: unvaccinated (n = `r dim(data_final[data_final$indic_dt_dose2_cov == 0, ])[1]`; `r 100*round(dim(data_final[data_final$indic_dt_dose2_cov==0, ])[1]/(dim(data_final[data_final$indic_dt_dose2_cov==0, ])[1]+dim(data_final[data_final$indic_dt_dose2_cov==1, ])[1]),3)`\%) and vaccinated (n = `r dim(data_final[data_final$indic_dt_dose2_cov == 1, ])[1]`; `r 100*round(dim(data_final[data_final$indic_dt_dose2_cov==1, ])[1]/(dim(data_final[data_final$indic_dt_dose2_cov==0, ])[1]+dim(data_final[data_final$indic_dt_dose2_cov==1, ])[1]),3)`\%) groups. With respect to this dataset, to deal with possible nonresponse bias, we explore the missing values and we conduct a multiple imputation. 
+
+
+
+```{r,echo=TRUE,eval=TRUE,message=FALSE,warning =FALSE,error=FALSE}
+data_na <- data_final %>%
+  select(
+    vaccine_cov,
+    age,
+    white_color,
+    cardiac,
+    diabetes,
+    hematologic,
+    obesity,
+    asthma,
+    hepatic,
+    neurologic,
+    pneumologic,
+    imuno,
+    renal,
+    education2,
+    residence2,
+    fever,
+    cough,
+    sore_throat,
+    dyspnea,
+    resp_disc,
+    desaturation,
+    diarrhea,
+    vomit,
+    abd_pain,
+    fatigue,
+    olfac_loss,
+    loss_taste,
+    icu,
+    intubation,
+    death
+  )
+
+data_na$vaccine_cov <- as.factor(data_na$vaccine_cov)
+data_na$white_color <- as.factor(data_na$white_color)
+data_na$cardiac <- as.factor(data_na$cardiac)
+data_na$diabetes <- as.factor(data_na$diabetes)
+data_na$hematologic <- as.factor(data_na$hematologic)
+data_na$obesity <- as.factor(data_na$obesity)
+data_na$asthma <- as.factor(data_na$asthma)
+data_na$hepatic <- as.factor(data_na$hepatic)
+data_na$neurologic <- as.factor(data_na$neurologic)
+data_na$pneumologic <- as.factor(data_na$pneumologic)
+data_na$imuno <- as.factor(data_na$imuno)
+data_na$renal <- as.factor(data_na$renal)
+data_na$residence2 <- as.factor(data_na$residence2)
+data_na$fever <- as.factor(data_na$fever)
+data_na$cough <- as.factor(data_na$cough)
+data_na$sore_throat <- as.factor(data_na$sore_throat)
+data_na$dyspnea <- as.factor(data_na$dyspnea)
+data_na$resp_disc <- as.factor(data_na$resp_disc)
+data_na$desaturation <- as.factor(data_na$desaturation)
+data_na$diarrhea <- as.factor(data_na$diarrhea)
+data_na$vomit <- as.factor(data_na$vomit)
+data_na$abd_pain <- as.factor(data_na$abd_pain)
+data_na$fatigue <- as.factor(data_na$fatigue)
+data_na$olfac_loss <- as.factor(data_na$olfac_loss)
+data_na$loss_taste <- as.factor(data_na$loss_taste)
+data_na$icu <- as.factor(data_na$icu)
+data_na$intubation <- as.factor(data_na$intubation)
+data_na$death <- as.factor(data_na$death)
+
+print(dfSummary(data_na, varnumbers = FALSE), method = "render")
+
+```
+
+Note that all comorbities variables and the education variable have high proportions of missing data. The percentage of valid responses is, at least, of 79,4% for variables related to the symptoms.    
+
+```{r, echo=FALSE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+vis_miss(data_na, sort_miss = TRUE)
+```
+
+To deal with missing data, we consider a multiple imputation by fully conditional specification. The mice package implements this method, where each incomplete variable is imputed by a separate model. According to the previously analysis, the most of the variables with missing data are binary. The variables "hematologic", "hepatic", "neurologic", "pneumologic", "renal" and "imuno" present categories extremely unbalanced, with approximately 60% missing data each one. For this reason and to avoid problems of bias and efficiency, these variables will not be considered in the process of multiple imputation. The "residence" variable was recategorized in two levels, urban/periurban and rural because the periurban level has only 6 observations. We considered as a imputation method for dichotomous variable the logistic regression (logreg), except when the percentage of missing values for the variable is greater than 50%. In this situation, we consider a a bootstrapped logistic regression model (logreg.boot). For education variable, we considered a proportional odds model (polr). Following, because of high percentage of missing data on some variables, we present 100 imputed datasets e the trace plots to investigate the convergence of the method.  
+
+
+```{r eval=TRUE, echo=TRUE, error=FALSE, message=FALSE, warning=FALSE}
+cols.dont.want <- c("hematologic", "hepatic", "neurologic", "pneumologic", "renal", "imuno")
+data_na2 <- data_na[, ! names(data_na) %in% cols.dont.want, drop = F]
+
+mice.impute.logreg <- function (y, ry, x, wy = NULL, ...) 
+{
+  if (is.null(wy)) 
+    wy <- !ry
+  aug <- augment(y, ry, x, wy)
+  x <- aug$x
+  y <- aug$y
+  ry <- aug$ry
+  wy <- aug$wy
+  w <- aug$w
+  x <- cbind(1, as.matrix(x))
+  expr <- expression(glm.fit(x = x[ry, , drop = FALSE], y = y[ry], 
+                             family = binomial(link = logit), weights = w[ry], maxit = 150))
+  fit <- eval(expr)
+  fit.sum <- summary.glm(fit)
+  beta <- coef(fit)
+  rv <- t(chol(sym(fit.sum$cov.unscaled)))
+  beta.star <- beta + rv %*% rnorm(ncol(rv))
+  p <- 1/(1 + exp(-(x[wy, , drop = FALSE] %*% beta.star)))
+  vec <- (runif(nrow(p)) <= p)
+  vec[vec] <- 1
+  if (is.factor(y)) {
+    vec <- factor(vec, c(0, 1), levels(y))
+  }
+  vec
+}
+
+imputed_Data <- mice(data_na2, m=100, maxit = 60, method = c("", "", "logreg", rep("logreg.boot", 4), "polyreg", 
+                          rep("logreg", 16)), printFlag = FALSE, seed = 300)
+
+summary(imputed_Data)
+plot(imputed_Data)
+dat_imp <- mids2milist(imputed_Data)
+```
+
+Each one of these  `r imputed_Data$m` imputed datasets were analysed using the function `with()`, and including an expression for the statistical analysis approach. Procedures to pool Chi-square values are available in the miceadds package. To combine the  `r imputed_Data$m` odds ratios, we use the miceafter package.    
+
+## Baseline characteristics of the subjects according to vaccination status 
+
+### White color
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_w <- with(dat_imp, exp = chisq.test(vaccine_cov, white_color))
+Stat_w <- numeric()
+for (i in 1:imputed_Data$m) Stat_w[i] <- fit_w$statistics[[i]]$statistic
+micombine.chisquare(Stat_w, 1, display = TRUE, version=1)
+```
+
+### Cardiac
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_c <- with(dat_imp, exp = chisq.test(vaccine_cov, cardiac))
+Stat_c <- numeric()
+for (i in 1:imputed_Data$m) Stat_c[i] <- fit_c$statistics[[i]]$statistic
+micombine.chisquare(Stat_c, 1, display = TRUE, version=1)
+```
+
+### Diabetes
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_d <- with(dat_imp, exp = chisq.test(vaccine_cov, diabetes))
+Stat_d <- numeric()
+for (i in 1:imputed_Data$m) Stat_d[i] <- fit_d$statistics[[i]]$statistic
+micombine.chisquare(Stat_d, 1, display = TRUE, version=1)
+```
+
+### Obesity
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_o <- with(dat_imp, exp = chisq.test(vaccine_cov, obesity))
+Stat_o <- numeric()
+for (i in 1:imputed_Data$m) Stat_o[i] <- fit_o$statistics[[i]]$statistic
+micombine.chisquare(Stat_o, 1, display = TRUE, version=1)
+```
+
+### Asthma
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_a <- with(dat_imp, exp = chisq.test(vaccine_cov, asthma))
+Stat_a <- numeric()
+for (i in 1:imputed_Data$m) Stat_a[i] <- fit_a$statistics[[i]]$statistic
+micombine.chisquare(Stat_a, 1, display = TRUE, version=1)
+```
+
+### Education
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_e <- with(dat_imp, exp = chisq.test(vaccine_cov, education2))
+Stat_e <- numeric()
+for (i in 1:imputed_Data$m) Stat_e[i] <- fit_e$statistics[[i]]$statistic
+micombine.chisquare(Stat_e, 2, display = TRUE, version=1)
+```
+
+### Residence area 2 (grouping the categories urban and periurban)
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+fit_res <- with(dat_imp, exp = chisq.test(vaccine_cov, residence2))
+Stat_res <- numeric()
+for (i in 1:imputed_Data$m) Stat_res[i] <- fit_res$statistics[[i]]$statistic
+micombine.chisquare(Stat_res, 2, display = TRUE, version=1)
+```
+
+## Characteristics of COVID-19 symptoms by vaccination status
+
+### Fever
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ fever))) 
+```
+
+### Cough
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ cough))) 
+```
+
+### Sore throat
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ sore_throat))) 
+```
+
+### Dyspnea
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ dyspnea))) 
+```
+
+### Respiratory discomfort
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ resp_disc))) 
+```
+
+### Desaturation
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ desaturation))) 
+```
+
+### Diarrhea
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ diarrhea))) 
+```
+
+### Vomit
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ vomit))) 
+```
+
+### Abdominal pain
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ abd_pain))) 
+```
+
+### Fatigue
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ fatigue))) 
+```
+
+### Loss of smell
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ olfac_loss))) 
+```
+
+### Loss of taste
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ loss_taste))) 
+```
+
+###  Any respiratory symptom
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+for (i in 1:imputed_Data$m){
+df <- dat_imp[[i]] %>% 
+  select(dyspnea,fatigue,desaturation,resp_disc)
+
+soma <- function(x){
+  if (sum(is.na(x))==4)
+    return(NA_character_)
+  else
+    return(sum(!is.na(x) & x=="yes")) 
+}
+dat_imp[[i]]$qt_sintomas_resp_aux <- apply(df,1,soma)
+
+dat_imp[[i]] <-  dat_imp[[i]] %>%
+  mutate(resp_symp = case_when(qt_sintomas_resp_aux >=1 ~ "yes",
+                               qt_sintomas_resp_aux ==0 ~ "no",
+                               TRUE ~ NA_character_))
+}
+
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ resp_symp))) 
+```
+
+### Any symptom
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+for (i in 1:imputed_Data$m){
+df <- dat_imp[[i]] %>% 
+  select(dyspnea,fatigue,desaturation,resp_disc,
+         fever,cough,sore_throat,diarrhea,vomit,abd_pain,olfac_loss,loss_taste)
+soma <- function(x){
+  if (sum(is.na(x))==12)
+    return(NA_character_)
+  else
+    return(sum(!is.na(x) & x=="yes")) 
+}
+dat_imp[[i]]$qt_sintomas_aux <- apply(df,1,soma)
+
+dat_imp[[i]] <-  dat_imp[[i]] %>%
+  mutate(symptom = case_when(qt_sintomas_aux >= 1 ~ "yes",
+                             qt_sintomas_aux == 0 ~ "no",
+                             TRUE ~ NA_character_))
+}
+
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ symptom))) 
+```
+
+## Characteristics of COVID-19 symptoms by vaccination status
+
+### ICU
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ icu))) 
+```
+
+### Intubation
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ intubation))) 
+```
+
+### Death
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+pool_odds_ratio(with(dat_imp, expr=odds_ratio(vaccine_cov ~ death))) 
+```
+
